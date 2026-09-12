@@ -57,12 +57,26 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.kayode.storagesense.tests
         GENERATE_INFOPLIST_FILE: YES
 
+  StorageSenseUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - StorageSenseUITests
+    dependencies:
+      - target: StorageSense
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kayode.storagesense.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: StorageSense
+
 schemes:
   StorageSense:
     build:
       targets:
         StorageSense: all
         StorageSenseTests: [test]
+        StorageSenseUITests: [test]
     run:
       config: Debug
     test:
@@ -70,6 +84,7 @@ schemes:
       gatherCoverageData: true
       targets:
         - StorageSenseTests
+        - StorageSenseUITests
     profile:
       config: Release
     analyze:

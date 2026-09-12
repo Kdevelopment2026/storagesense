@@ -1,215 +1,199 @@
 import SwiftUI
 import SwiftData
-import Charts
+import Photos
 
-/// The whole diagnostic in one screen: the breakdown chart, the single
-/// biggest-win recommendation, and entry points into each category. Never
-/// gated behind ProStatus — see CLAUDE.md, golden rule 2.
+/// The whole diagnostic in one screen: the breakdown ring, one chip per
+/// category, and the single biggest-win recommendation. Never gated behind
+/// ProStatus — see CLAUDE.md, golden rule 2.
 struct HomeView: View {
     var scanner: PhotoLibraryScanner
 
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \ScanResult.scannedAt, order: .reverse) private var scanResults: [ScanResult]
-    @State private var latestAssets: [AssetSummary] = []
-    @State private var isScanning = false
+    @State private var selectedCategory: PhotoCategory?
 
     private var latestScan: ScanResult? { scanResults.first }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: StorageSenseTheme.Spacing.lg) {
-                if let scan = latestScan {
-                    breakdownCard(for: scan)
-                    if let recommendation = RecommendationEngine.topRecommendation(from: scan.categoryTotals) {
-                        biggestWinCard(recommendation)
+                header
+
+                if scanner.authorizationStatus == .limited {
+                    limitedAccessNote
+                }
+
+                if let scan = latestScan, !scanner.isScanning {
+                    BreakdownRing(totals: scan.categoryTotals)
+                        .revealOnAppear()
+                    categoryGrid(for: scan)
+                        .revealOnAppear(delay: 0.08)
+                    if let top = RecommendationEngine.topRecommendation(from: scan.categoryTotals) {
+                        BiggestWinCard(
+                            recommendation: top,
+                            shareOfLibrary: RecommendationEngine.share(of: top.category, in: scan.categoryTotals)
+                        ) {
+                            selectedCategory = top.category
+                        }
+                        .revealOnAppear(delay: 0.16)
                     }
-                    categoryList(for: scan)
                     lastScannedFooter(scan)
-                } else if isScanning {
-                    ProgressView("Scanning your Photos library…")
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, StorageSenseTheme.Spacing.xl)
+                } else if scanner.isScanning {
+                    scanningState
                 } else {
                     emptyState
                 }
             }
-            .padding(StorageSenseTheme.Spacing.md)
+            .padding(.horizontal, StorageSenseTheme.Spacing.lg)
+            .padding(.bottom, StorageSenseTheme.Spacing.xl)
         }
-        .navigationTitle("StorageSense")
+        .screenBackground()
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink {
-                    SettingsView(scanner: scanner, onRescan: { await performScan() })
+                    SettingsView(scanner: scanner)
                 } label: {
                     Image(systemName: "gearshape")
+                        .foregroundStyle(StorageSenseTheme.textSecondary)
+                        .frame(width: StorageSenseTheme.minimumTapTarget, height: StorageSenseTheme.minimumTapTarget)
                 }
                 .accessibilityLabel("Settings")
             }
         }
+        .navigationDestination(item: $selectedCategory) { category in
+            CategoryDetailView(category: category, scanner: scanner)
+        }
         .task {
             if latestScan == nil {
-                await performScan()
+                await ScanStore.rescan(using: scanner, in: modelContext)
             }
         }
     }
 
-    private var emptyState: some View {
-        VStack(spacing: StorageSenseTheme.Spacing.md) {
-            Text("No scan yet")
-                .font(.title3.bold())
-            Button("Scan my Photos library") {
-                Task { await performScan() }
-            }
-            .buttonStyle(.borderedProminent)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.top, StorageSenseTheme.Spacing.xl)
-    }
+    // MARK: Sections
 
-    private func breakdownCard(for scan: ScanResult) -> some View {
-        VStack(alignment: .leading, spacing: StorageSenseTheme.Spacing.sm) {
-            Text("Your Photos library")
-                .font(.headline)
-            Text(ByteFormatter.string(from: scan.totalByteCount))
-                .font(.system(size: 34, weight: .bold, design: .rounded))
-
-            Chart(scan.categoryTotals) { total in
-                SectorMark(
-                    angle: .value("Bytes", total.byteCount),
-                    innerRadius: .ratio(0.6)
-                )
-                .foregroundStyle(StorageSenseTheme.color(for: total.category))
-                .accessibilityLabel(total.category.displayName)
-                .accessibilityValue(ByteFormatter.string(from: total.byteCount))
-            }
-            .frame(height: 200)
-            // Colour is never the only signal — every segment also has a
-            // labelled legend row below (golden rule 9).
-            .accessibilityChartDescriptor(BreakdownChartDescriptor(scan: scan))
-
-            VStack(alignment: .leading, spacing: StorageSenseTheme.Spacing.xs) {
-                ForEach(scan.categoryTotals.sorted(by: { $0.byteCount > $1.byteCount })) { total in
-                    HStack {
-                        Circle()
-                            .fill(StorageSenseTheme.color(for: total.category))
-                            .frame(width: 10, height: 10)
-                        Text(total.category.displayName)
-                        Spacer()
-                        Text(ByteFormatter.string(from: total.byteCount))
-                            .foregroundStyle(.secondary)
-                    }
-                    .font(.subheadline)
-                }
-            }
-        }
-        .padding(StorageSenseTheme.Spacing.md)
-        .background(StorageSenseTheme.cardBackground, in: RoundedRectangle(cornerRadius: StorageSenseTheme.CornerRadius.card))
-    }
-
-    private func biggestWinCard(_ recommendation: RecommendationEngine.Recommendation) -> some View {
+    private var header: some View {
         VStack(alignment: .leading, spacing: StorageSenseTheme.Spacing.xs) {
-            Label("Biggest win", systemImage: "arrow.down.right.circle.fill")
-                .font(.headline)
-                .foregroundStyle(.tint)
-            Text(recommendation.headline)
-                .font(.body)
-            Text(recommendation.category.explanation)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            Text("Your Photos library")
+                .font(StorageSenseTheme.Font.title)
+                .foregroundStyle(StorageSenseTheme.textPrimary)
+            Text(subtitle)
+                .font(StorageSenseTheme.Font.secondary)
+                .foregroundStyle(StorageSenseTheme.textSecondary)
         }
-        .padding(StorageSenseTheme.Spacing.md)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(StorageSenseTheme.cardBackground, in: RoundedRectangle(cornerRadius: StorageSenseTheme.CornerRadius.card))
+        .accessibilityElement(children: .combine)
     }
 
-    private func categoryList(for scan: ScanResult) -> some View {
-        VStack(alignment: .leading, spacing: StorageSenseTheme.Spacing.sm) {
-            Text("By category")
-                .font(.headline)
-            ForEach(RecommendationEngine.rankedRecommendations(from: scan.categoryTotals), id: \.category) { recommendation in
-                NavigationLink {
-                    CategoryDetailView(category: recommendation.category, assets: latestAssets)
+    private var subtitle: String {
+        if scanner.isScanning { return "Scanning on-device…" }
+        if let scan = latestScan {
+            return "Scanned \(scan.scannedAt.formatted(.relative(presentation: .named))) · on-device"
+        }
+        return "Nothing leaves your phone"
+    }
+
+    private var limitedAccessNote: some View {
+        HStack(alignment: .top, spacing: StorageSenseTheme.Spacing.sm) {
+            Image(systemName: "photo.badge.checkmark")
+                .foregroundStyle(StorageSenseTheme.caution)
+                .accessibilityHidden(true)
+            Text("You've shared a selection of photos, not the whole library. The breakdown covers only what you've shared — you can change this in Settings.")
+                .font(StorageSenseTheme.Font.caption)
+                .foregroundStyle(StorageSenseTheme.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .surfaceCard(padding: 14)
+    }
+
+    private func categoryGrid(for scan: ScanResult) -> some View {
+        let ranked = RecommendationEngine.rankedRecommendations(from: scan.categoryTotals)
+        let columns = [GridItem(.flexible(), spacing: StorageSenseTheme.Spacing.sm), GridItem(.flexible(), spacing: StorageSenseTheme.Spacing.sm)]
+        return LazyVGrid(columns: columns, spacing: StorageSenseTheme.Spacing.sm) {
+            ForEach(ranked, id: \.category) { recommendation in
+                Button {
+                    selectedCategory = recommendation.category
                 } label: {
-                    HStack {
-                        Image(systemName: recommendation.category.systemImageName)
-                            .foregroundStyle(StorageSenseTheme.color(for: recommendation.category))
-                            .frame(width: 28)
-                        VStack(alignment: .leading) {
-                            Text(recommendation.category.displayName)
-                            Text("\(recommendation.assetCount) items")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Text(ByteFormatter.string(from: recommendation.byteCount))
-                            .foregroundStyle(.secondary)
-                    }
-                    .contentShape(Rectangle())
-                    .frame(minHeight: 44)
+                    CategoryChip(recommendation: recommendation)
                 }
+                .buttonStyle(.plain)
             }
         }
     }
 
     private func lastScannedFooter(_ scan: ScanResult) -> some View {
-        HStack {
-            Text("Last scanned \(scan.scannedAt.formatted(.relative(presentation: .named)))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        HStack(alignment: .top) {
+            Text("Sizes are measured on this device. Items stored only in iCloud count as 0.")
+                .font(StorageSenseTheme.Font.caption)
+                .foregroundStyle(StorageSenseTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer()
-            Button("Re-scan") {
-                Task { await performScan() }
+            Button {
+                Task { await ScanStore.rescan(using: scanner, in: modelContext) }
+            } label: {
+                Label("Re-scan", systemImage: "arrow.clockwise")
+                    .font(StorageSenseTheme.Font.eyebrow)
+                    .foregroundStyle(StorageSenseTheme.accent)
+                    .frame(minHeight: StorageSenseTheme.minimumTapTarget)
             }
-            .font(.caption)
+            .accessibilityLabel("Re-scan Photos library")
         }
-        .padding(.top, StorageSenseTheme.Spacing.sm)
     }
 
-    private func performScan() async {
-        isScanning = true
-        let (totals, assets) = await scanner.scan()
-        latestAssets = assets
-        let result = ScanResult(scannedAt: .now, categoryTotals: totals)
-        modelContext.insert(result)
-        // Keep only the latest scan cached — StorageSense never needs scan
-        // history, only "what does the library look like right now."
-        for old in scanResults {
-            modelContext.delete(old)
+    private var scanningState: some View {
+        VStack(spacing: StorageSenseTheme.Spacing.md) {
+            ProgressView(value: scanner.progress)
+                .tint(StorageSenseTheme.accent)
+            Text("Reading sizes and types, not the photos themselves.")
+                .font(StorageSenseTheme.Font.secondary)
+                .foregroundStyle(StorageSenseTheme.textSecondary)
+                .multilineTextAlignment(.center)
         }
-        isScanning = false
+        .frame(maxWidth: .infinity)
+        .padding(.top, StorageSenseTheme.Spacing.xl * 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Scanning your Photos library, \(Int(scanner.progress * 100)) percent")
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: StorageSenseTheme.Spacing.md) {
+            Text("No scan yet")
+                .font(StorageSenseTheme.Font.heading)
+                .foregroundStyle(StorageSenseTheme.textPrimary)
+            Button("Scan my Photos library") {
+                Task { await ScanStore.rescan(using: scanner, in: modelContext) }
+            }
+            .buttonStyle(.primary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, StorageSenseTheme.Spacing.xl)
     }
 }
 
-/// Text-equivalent breakdown for VoiceOver, so the chart is never the only
-/// way to read the data (golden rule 9).
-private struct BreakdownChartDescriptor: AXChartDescriptorRepresentable {
-    let scan: ScanResult
+#Preview("Medium library") {
+    HomePreviewHost(size: .medium)
+}
 
-    func makeChartDescriptor() -> AXChartDescriptor {
-        let categoryAxis = AXCategoricalDataAxisDescriptor(
-            title: "Category",
-            categoryOrder: scan.categoryTotals.map { $0.category.displayName }
-        )
-        let byteAxis = AXNumericDataAxisDescriptor(
-            title: "Bytes",
-            range: 0...Double(scan.totalByteCount),
-            gridlinePositions: []
-        ) { value in ByteFormatter.string(from: Int64(value)) }
+#Preview("Small library") {
+    HomePreviewHost(size: .small)
+}
 
-        let series = AXDataSeriesDescriptor(
-            name: "Storage breakdown",
-            isContinuous: false,
-            dataPoints: scan.categoryTotals.map { total in
-                AXDataPoint(x: total.category.displayName, y: Double(total.byteCount))
-            }
-        )
+#Preview("Large library") {
+    HomePreviewHost(size: .large)
+}
 
-        return AXChartDescriptor(
-            title: "Storage breakdown",
-            summary: nil,
-            xAxis: categoryAxis,
-            yAxis: byteAxis,
-            series: [series]
-        )
+/// Seeds an in-memory container so Home renders a real breakdown in previews
+/// without touching PhotoKit.
+private struct HomePreviewHost: View {
+    let size: DemoData.LibrarySize
+
+    var body: some View {
+        let container = try! ModelContainer(for: ScanResult.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        container.mainContext.insert(DemoData.scanResult(size))
+        return NavigationStack {
+            HomeView(scanner: PhotoLibraryScanner())
+        }
+        .modelContainer(container)
     }
 }

@@ -13,6 +13,14 @@ enum PhotoCategory: String, CaseIterable, Identifiable, Codable {
     case largeFile
     case standard
 
+    /// The categories v1 actually shows. `.selfie` is excluded: PhotoKit has
+    /// no public "is this a selfie" flag and the EXIF lens-facing heuristic
+    /// hasn't been validated on a real device, so rather than ship it
+    /// silently broken the category stays out of the UI (CLAUDE.md,
+    /// definition of done). The scanner never assigns it either, so selfies
+    /// land in "Everything else" — the safe default.
+    static let v1Cases: [PhotoCategory] = [.video, .livePhoto, .screenshot, .burstDuplicate, .largeFile, .standard]
+
     var id: String { rawValue }
 
     var displayName: String {
@@ -46,17 +54,31 @@ enum PhotoCategory: String, CaseIterable, Identifiable, Codable {
         case .screenshot:
             return "Screenshots are easy to take and easy to forget. Most people never look at these again after the day they were taken."
         case .video:
-            return "Video is the single biggest driver of Photos storage for most people — a few minutes of 4K video can outweigh thousands of photos."
+            return "Video is the single biggest driver of Photos storage for most people. A few minutes of 4K video can outweigh thousands of photos."
         case .livePhoto:
-            return "Live Photos take roughly 2–3x the space of a regular photo, because each one also stores a short video clip you may never watch."
+            return "Live Photos take roughly two to three times the space of a regular photo, because each one also stores a short video clip you may never watch."
         case .burstDuplicate:
-            return "Burst shots and near-identical repeats — usually you only wanted one of these, not all of them."
+            return "Burst shots and near-identical repeats taken seconds apart. Usually you only wanted one of these, not all of them."
         case .selfie:
             return "Front-camera shots, grouped so you can review them together rather than one at a time."
         case .largeFile:
-            return "Individually oversized photos or videos — often a single long recording or a high-resolution export."
+            return "Individually oversized photos or videos. Often a single long recording or a high-resolution export."
         case .standard:
             return "Everything that doesn't fall into a more specific category above."
+        }
+    }
+
+    /// One short line for the biggest-win card — why this category is worth
+    /// looking at first.
+    var winHint: String {
+        switch self {
+        case .screenshot: return "Quick to review, and rarely missed once gone."
+        case .video: return "Reviewing the longest recordings first recovers the most space."
+        case .livePhoto: return "Each one carries a short video clip alongside the still."
+        case .burstDuplicate: return "Keeping one shot from each burst frees the rest."
+        case .selfie: return "Grouped together so you can review them in one pass."
+        case .largeFile: return "A handful of files, each carrying a lot of weight."
+        case .standard: return "The long tail of everyday photos."
         }
     }
 }

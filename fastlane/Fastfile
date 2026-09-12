@@ -1,0 +1,170 @@
+# Fastfile
+#
+# Build, sign and upload StorageSense. Authentication is the App Store
+# Connect API key described in fastlane/api_key.json (git-ignored, never
+# committed); the private .p8 itself stays in ~/.appstoreconnect. When this
+# repo has no api_key.json yet, the sibling Ballast project's descriptor is
+# used — same team, same key.
+#
+#   fastlane ios status      — app record + builds on App Store Connect
+#   fastlane ios create_app  — register bundle id + create the app record
+#   fastlane ios test        — regenerate project, run unit tests
+#   fastlane ios build       — archive a signed App Store .ipa into build/
+#   fastlane ios upload      — push build/StorageSense.ipa to TestFlight
+#   fastlane ios beta        — test + build + upload
+
+APP_BUNDLE_ID = "com.kayode.storagesense".freeze
+APP_NAME = ENV.fetch("STORAGESENSE_APP_NAME", "StorageSense").freeze
+TEAM_ID = "SJW465977U".freeze
+API_KEY_CANDIDATES = [
+  File.join(__dir__, "api_key.json"),
+  File.expand_path("../../Ballast/fastlane/api_key.json", __dir__),
+].freeze
+PROJECT = File.expand_path("../StorageSense.xcodeproj", __dir__).freeze
+SCHEME = "StorageSense".freeze
+BUILD_DIR = File.expand_path("../build", __dir__).freeze
+
+def api_key_config
+  path = API_KEY_CANDIDATES.find { |p| File.exist?(p) }
+  UI.user_error!("No api_key.json found. Copy fastlane/api_key.json.example and fill it in.") unless path
+  JSON.parse(File.read(path))
+end
+
+platform :ios do
+  # Every lane that talks to Apple starts here. Sets lane_context so gym,
+  # pilot and deliver all pick the key up without being told.
+  private_lane :authenticate do
+    config = api_key_config
+    app_store_connect_api_key(
+      key_id: config["key_id"],
+      issuer_id: config["issuer_id"],
+      key_filepath: File.expand_path(config["key_filepath"]),
+      in_house: config.fetch("in_house", false)
+    )
+  end
+
+  desc "Show whether the app record exists and which builds Connect has"
+  lane :status do
+    authenticate
+    require "spaceship"
+    app = Spaceship::ConnectAPI::App.find(APP_BUNDLE_ID)
+    if app.nil?
+      UI.important("No app record for #{APP_BUNDLE_ID}. Run `fastlane ios create_app`.")
+      next
+    end
+    UI.success("App: #{app.name} (#{app.id}) — #{app.bundle_id}, SKU #{app.sku}")
+    builds = Spaceship::ConnectAPI::Build.all(app_id: app.id)
+    if builds.empty?
+      UI.message("Connect has no builds yet.")
+    else
+      builds.sort_by { |b| b.version.to_i }.each do |b|
+        UI.message("build #{b.version} | #{b.processing_state} | uploaded #{b.uploaded_date}")
+      end
+      UI.important("Highest build number: #{builds.map { |b| b.version.to_i }.max}. CURRENT_PROJECT_VERSION in project.yml must be higher before the next archive.")
+    end
+    app.get_app_store_versions.each do |v|
+      UI.message("version #{v.version_string} | #{v.app_store_state}")
+    end
+  end
+
+  desc "Register the bundle id and create the App Store Connect app record"
+  # Both halves go through the App Store Connect API so no Apple ID login is
+  # needed: the bundle id via the bundleIds endpoint, the app record directly.
+  lane :create_app do
+    authenticate
+    require "spaceship"
+    existing = Spaceship::ConnectAPI::BundleId.all(filter: { identifier: APP_BUNDLE_ID })
+                                             .find { |b| b.identifier == APP_BUNDLE_ID }
+    if existing
+      UI.success("Bundle id already registered: #{existing.identifier} (#{existing.name})")
+    else
+      bundle = Spaceship::ConnectAPI::BundleId.create(name: "StorageSense", platform: "IOS", identifier: APP_BUNDLE_ID)
+      UI.success("Registered bundle id #{bundle.identifier}")
+    end
+    app = Spaceship::ConnectAPI::App.find(APP_BUNDLE_ID)
+    if app
+      UI.success("App record already exists: #{app.name} (#{app.id})")
+    else
+      app = Spaceship::ConnectAPI::App.create(
+        name: APP_NAME,
+        version_string: "1.0",
+        sku: "STORAGESENSE-IOS-001",
+        primary_locale: "en-GB",
+        bundle_id: APP_BUNDLE_ID,
+        platforms: ["IOS"]
+      )
+      UI.success("Created app record #{app.name} (#{app.id})")
+    end
+  end
+
+  desc "Regenerate the Xcode project and run the unit tests"
+  lane :test do
+    sh("cd .. && xcodegen generate")
+    run_tests(
+      project: PROJECT,
+      scheme: SCHEME,
+      only_testing: ["StorageSenseTests"],
+      devices: ["iPhone 17 Pro Max"],
+      skip_slack: true
+    )
+  end
+
+  desc "Archive a signed App Store build into build/"
+  # The archive step signs with the development identity via automatic
+  # signing and the API key. The export step cannot: creating a cloud-managed
+  # distribution profile needs an Admin key, so sigh fetches an ordinary App
+  # Store profile for the bundle id and export re-signs manually with the
+  # Apple Distribution certificate in the login keychain.
+  lane :build do
+    authenticate
+    config = api_key_config
+    sh("cd .. && xcodegen generate")
+
+    profile_path = get_provisioning_profile(
+      app_identifier: APP_BUNDLE_ID,
+      output_path: BUILD_DIR,
+      filename: "AppStore_#{APP_BUNDLE_ID}.mobileprovision",
+      readonly: false
+    )
+    profile_name = lane_context[SharedValues::SIGH_NAME]
+    UI.message("Using profile #{profile_name} (#{profile_path})")
+
+    auth_args = "-allowProvisioningUpdates " \
+                "-authenticationKeyPath #{File.expand_path(config['key_filepath']).shellescape} " \
+                "-authenticationKeyID #{config['key_id']} " \
+                "-authenticationKeyIssuerID #{config['issuer_id']}"
+    build_app(
+      project: PROJECT,
+      scheme: SCHEME,
+      configuration: "Release",
+      export_method: "app-store",
+      output_directory: BUILD_DIR,
+      output_name: "StorageSense",
+      xcargs: auth_args,
+      export_options: {
+        method: "app-store",
+        signingStyle: "manual",
+        signingCertificate: "Apple Distribution",
+        teamID: TEAM_ID,
+        provisioningProfiles: { APP_BUNDLE_ID => profile_name },
+        uploadSymbols: true
+      }
+    )
+  end
+
+  desc "Upload the archived ipa to TestFlight"
+  lane :upload do
+    authenticate
+    upload_to_testflight(
+      ipa: File.join(BUILD_DIR, "StorageSense.ipa"),
+      skip_waiting_for_build_processing: true
+    )
+  end
+
+  desc "Test, build and upload to TestFlight"
+  lane :beta do
+    test
+    build
+    upload
+  end
+end
