@@ -452,4 +452,68 @@ platform :ios do
     sh("cd .. && xcrun devicectl device install app --device #{device_id} build/device/Build/Products/Debug-iphoneos/#{SCHEME}.app")
     sh("cd .. && xcrun devicectl device process launch --device #{device_id} #{APP_BUNDLE_ID}")
   end
+
+  desc "Pre-submission readiness: version, build, review contact, IDFA, export compliance"
+  lane :ready do
+    require "spaceship"
+    authenticate
+    app = Spaceship::ConnectAPI::App.find(APP_BUNDLE_ID) || UI.user_error!("No app record")
+    v = asc(:get, "/v1/apps/#{app.id}/appStoreVersions?filter[platform]=IOS&limit=1&include=build,appStoreReviewDetail")["data"].first
+    a = v["attributes"]
+    UI.message("version #{a['versionString']} state=#{a['appStoreState']} releaseType=#{a['releaseType']} usesIdfa=#{a['usesIdfa'].inspect}")
+    build = v.dig("relationships", "build", "data")
+    UI.message("build attached: #{build ? build['id'] : 'NONE'}")
+    if build
+      b = asc(:get, "/v1/builds/#{build['id']}")["data"]["attributes"]
+      UI.message("build #{b['version']} processing=#{b['processingState']} usesNonExemptEncryption=#{b['usesNonExemptEncryption'].inspect} expired=#{b['expired']}")
+    end
+    rd = asc(:get, "/v1/appStoreVersions/#{v['id']}/appStoreReviewDetail")["data"] rescue nil
+    if rd
+      r = rd["attributes"]
+      UI.message("review contact: #{r['contactFirstName']} #{r['contactLastName']} phone=#{r['contactPhone'].to_s.empty? ? 'MISSING' : 'set'} email=#{r['contactEmail'].to_s.empty? ? 'MISSING' : 'set'} notes=#{r['notes'].to_s.length}ch demoRequired=#{r['demoAccountRequired']}")
+    else
+      UI.important("review contact: NOT SET")
+    end
+    infos = asc(:get, "/v1/apps/#{app.id}/appInfos?include=primaryCategory,secondaryCategory")["data"]
+    info = infos.find { |i| i["attributes"]["appStoreState"] == "PREPARE_FOR_SUBMISSION" } || infos.first
+    UI.message("categories: #{info.dig('relationships','primaryCategory','data','id')} / #{info.dig('relationships','secondaryCategory','data','id')}")
+    ar = asc(:get, "/v1/appInfos/#{info['id']}/ageRatingDeclaration")["data"]["attributes"]
+    UI.message("age rating declared: #{ar.values.compact.length} fields")
+    locs = asc(:get, "/v1/appStoreVersions/#{v['id']}/appStoreVersionLocalizations")["data"]
+    locs.each do |l|
+      la = l["attributes"]
+      shots = asc(:get, "/v1/appStoreVersionLocalizations/#{l['id']}/appScreenshotSets?include=appScreenshots")["data"]
+      UI.message("#{la['locale']}: desc=#{la['description'].to_s.length}ch keywords=#{la['keywords'].to_s.length}ch shots=#{shots.map { |s| "#{s.dig('attributes','screenshotDisplayType')}:#{(s.dig('relationships','appScreenshots','data')||[]).length}" }.join(' ')}")
+    end
+    UI.important("Not readable via API: App Privacy label (must be Data Not Collected), pricing confirmation UI, content rights declaration. Check those in the browser.")
+  end
+
+  desc "Upload review notes only (keeps the phone number entered in the browser) and mark the build's export compliance"
+  lane :review_notes do
+    require "spaceship"
+    authenticate
+    app = Spaceship::ConnectAPI::App.find(APP_BUNDLE_ID) || UI.user_error!("No app record")
+    v = asc(:get, "/v1/apps/#{app.id}/appStoreVersions?filter[platform]=IOS&limit=1&include=build")["data"].first
+    rd = asc(:get, "/v1/appStoreVersions/#{v['id']}/appStoreReviewDetail")["data"]
+    notes = File.read(File.join(__dir__, "metadata", "review_information", "notes.txt")).strip
+    asc(:patch, "/v1/appStoreReviewDetails/#{rd['id']}", { data: { type: "appStoreReviewDetails", id: rd["id"], attributes: { notes: notes, demoAccountRequired: false } } })
+    UI.success("review notes uploaded (#{notes.length} chars)")
+    if (build = v.dig("relationships", "build", "data"))
+      asc(:patch, "/v1/builds/#{build['id']}", { data: { type: "builds", id: build["id"], attributes: { usesNonExemptEncryption: false } } })
+      UI.success("build export compliance: uses no non-exempt encryption")
+    end
+  end
+
+  desc "Submit the prepared version for App Review (manual release after approval)"
+  lane :submit do
+    require "spaceship"
+    authenticate
+    app = Spaceship::ConnectAPI::App.find(APP_BUNDLE_ID) || UI.user_error!("No app record")
+    v = asc(:get, "/v1/apps/#{app.id}/appStoreVersions?filter[platform]=IOS&limit=1")["data"].first
+    UI.user_error!("Version is #{v.dig('attributes','appStoreState')}, not PREPARE_FOR_SUBMISSION") unless v.dig("attributes", "appStoreState") == "PREPARE_FOR_SUBMISSION"
+    sub = asc(:post, "/v1/reviewSubmissions", { data: { type: "reviewSubmissions", attributes: { platform: "IOS" }, relationships: { app: { data: { type: "apps", id: app.id } } } } })["data"]
+    asc(:post, "/v1/reviewSubmissionItems", { data: { type: "reviewSubmissionItems", relationships: { reviewSubmission: { data: { type: "reviewSubmissions", id: sub["id"] } }, appStoreVersion: { data: { type: "appStoreVersions", id: v["id"] } } } } })
+    asc(:patch, "/v1/reviewSubmissions/#{sub['id']}", { data: { type: "reviewSubmissions", id: sub["id"], attributes: { submitted: true } } })
+    UI.success("submitted version #{v.dig('attributes','versionString')} for review (submission #{sub['id']})")
+  end
 end
