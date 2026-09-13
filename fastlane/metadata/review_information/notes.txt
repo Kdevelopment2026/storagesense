@@ -1,0 +1,29 @@
+NO SIGN IN REQUIRED
+There is no account, no login and no demo credentials. The app has no server component at all.
+
+FIRST LAUNCH
+A short splash, then a three-page introduction (skippable), then a plain-language explanation screen before the iOS Photos permission prompt. Grant Full Access (Limited also works) and the app scans the library on-device.
+
+WHAT TO TRY
+1. Home shows the library total in a ring, one chip per category (videos, Live Photos, screenshots, bursts, large files, everything else) and a "Biggest win" card. All of this is free and never gated.
+2. Tap any chip or "Review …" to open the category: a thumbnail grid with sort options and a running "selected" total.
+3. Select a few items and tap "Review N items". The confirmation screen states that deleted items go to Recently Deleted in Photos (Apple's 30-day undo). "Delete" hands the request to PHPhotoLibrary; "Keep everything" cancels. Nothing is ever deleted automatically.
+4. Settings (gear, top right): re-scan, Photos access status, the iCloud calculator (manual entry only — the app cannot and does not read iCloud usage), appearance, and the privacy statement.
+
+PHOTOS PERMISSION
+NSPhotoLibraryUsageDescription explains the purpose. Read-write access is needed only so the user's own confirmed deletions can be handed to Photos; the app never modifies or adds assets.
+
+SCOPE
+The app measures the Photos library only. It makes no claim about whole-device storage anywhere in the UI or listing, because iOS provides no API for that.
+
+IT WORKS OFFLINE
+Please feel free to test in airplane mode. Everything works. There is no networking code in this build.
+
+PRIVACY
+No analytics, no tracking, no advertising, no third-party SDKs of any kind. The only persisted data is a per-category byte/count summary of the last scan, stored on device with SwiftData. The privacy label is Data Not Collected, which is accurate. PrivacyInfo.xcprivacy declares UserDefaults (CA92.1) for the appearance setting and first-launch flag only.
+
+IN-APP PURCHASE
+None in this version. "Restore purchase" in Settings is a no-op placeholder for a future one-time unlock; no StoreKit calls are made.
+
+ACCESSIBILITY
+VoiceOver labels on every category chip, chart segment and thumbnail; Dynamic Type; Reduce Motion respected; all category colours are always paired with a text label and byte value.

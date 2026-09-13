@@ -1,0 +1,1 @@
+cleaner,clean,duplicate,video,screenshot,delete,icloud,declutter,library,manager,live,burst,full

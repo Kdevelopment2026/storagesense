@@ -23,8 +23,7 @@ struct ThumbnailCell: View {
                             .resizable()
                             .scaledToFill()
                     } else {
-                        Rectangle()
-                            .fill(StorageSenseTheme.color(for: asset.category).opacity(0.18))
+                        placeholder
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: StorageSenseTheme.CornerRadius.thumbnail, style: .continuous))
@@ -65,6 +64,23 @@ struct ThumbnailCell: View {
         .task {
             await loadThumbnail()
         }
+    }
+
+    /// Shown while a thumbnail loads, or permanently for demo assets: a soft
+    /// two-tone gradient varied per asset so a grid reads as a mosaic rather
+    /// than a wall of identical tiles.
+    private var placeholder: some View {
+        let seed = abs(asset.id.hashValue)
+        let hue = Double(seed % 360) / 360
+        let base = StorageSenseTheme.color(for: asset.category)
+        return LinearGradient(
+            colors: [
+                base.opacity(0.35),
+                Color(hue: hue, saturation: 0.35, brightness: 0.45).opacity(0.6),
+            ],
+            startPoint: seed % 2 == 0 ? .topLeading : .bottomLeading,
+            endPoint: seed % 2 == 0 ? .bottomTrailing : .topTrailing
+        )
     }
 
     private func loadThumbnail() async {

@@ -42,7 +42,7 @@ final class PhotoLibraryScanner {
     init() {
         // Synchronous, non-prompting read of whatever the current status is —
         // safe to call before any explanation UI has been shown.
-        authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        authorizationStatus = DemoData.isSeeded ? .authorized : PHPhotoLibrary.authorizationStatus(for: .readWrite)
     }
 
     /// Re-reads the current status without prompting — used when returning
@@ -70,6 +70,13 @@ final class PhotoLibraryScanner {
         isScanning = true
         progress = 0
         defer { isScanning = false }
+
+        // Screenshot / UI-test mode: a fixed demo library, no PhotoKit.
+        if DemoData.isSeeded {
+            lastAssets = DemoData.allAssets()
+            progress = 1
+            return (DemoData.totals(.medium), lastAssets)
+        }
 
         let summaries = await enumerateLibrary { [weak self] fraction in
             Task { @MainActor in self?.progress = fraction }

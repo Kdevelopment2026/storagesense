@@ -66,7 +66,8 @@ struct HomeView: View {
             CategoryDetailView(category: category, scanner: scanner)
         }
         .task {
-            if latestScan == nil {
+            // Demo mode never trusts a cached summary from a real scan.
+            if latestScan == nil || DemoData.isSeeded {
                 await ScanStore.rescan(using: scanner, in: modelContext)
             }
         }

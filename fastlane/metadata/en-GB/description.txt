@@ -1,0 +1,35 @@
+Your Photos library is full and you don't know why. StorageSense scans it on your phone and tells you, in plain language: how much is screenshots, how much is Live Photos, how much is bursts and oversized videos — and which one to look at first.
+
+No swiping through 40,000 photos one at a time. No account. No subscription to see the answer. Nothing leaves your device.
+
+SEE BEFORE YOU DELETE
+Most cleanup apps rush you into deleting. StorageSense starts with the diagnosis: a clear breakdown of your library by category and size, each with a short, calm explanation of why it takes the space it does. You decide what to do with that.
+
+BIGGEST WIN FIRST
+Categories are ranked by how much space reviewing them would actually recover, and the top one is called out on the home screen. For most people that's video — a few minutes of 4K can outweigh thousands of photos — but your library might surprise you.
+
+WHAT IT FINDS
+• Screenshots — easy to take, rarely looked at again
+• Live Photos — each one carries a short video clip alongside the still
+• Bursts and near-duplicates — shots taken seconds apart, where you usually wanted one
+• Large files — individually oversized photos or videos
+• Videos — the biggest driver of Photos storage for most people
+• Everything else — the long tail of everyday photos
+
+REVIEW AND DELETE, SAFELY
+Open a category, sort by largest, newest or oldest, and select what to remove. Bursts are grouped so you can keep the best shot and clear the rest in one tap. Nothing is ever deleted automatically, and everything you remove goes to Recently Deleted in the Photos app — Apple's own 30-day undo — so deleting never feels like a leap of faith.
+
+ICLOUD CALCULATOR
+Type in your iCloud plan and current usage and see whether freeing this much space would let you drop to a cheaper tier. Manual entry only: no app can read your iCloud usage, and StorageSense doesn't pretend to.
+
+PRIVATE BY CONSTRUCTION
+• Works fully offline — try it in airplane mode
+• No account, no sign-in, no server
+• No analytics, no ads, no tracking, no third-party code
+• App Store privacy label: Data Not Collected
+• Reads sizes and types, not the content of your photos
+
+HONEST SCOPE
+StorageSense measures your Photos library — photos and videos on this device. iOS gives no app a view of the whole phone, so we don't claim one.
+
+Built for anyone with years of photos, a paid iCloud plan, and a decluttering weekend they never finished. Small, understandable steps — starting with knowing what's there.
