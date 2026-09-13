@@ -12,6 +12,10 @@
 #   fastlane ios build       — archive a signed App Store .ipa into build/
 #   fastlane ios upload      — push build/StorageSense.ipa to TestFlight
 #   fastlane ios beta        — test + build + upload
+#   fastlane ios listing     — metadata, screenshots, categories, age rating
+#   fastlane ios price_free  — Free price, GBR base territory
+#   fastlane ios availability — every territory incl. new ones
+#   fastlane ios device      — Debug build straight onto the paired iPhone
 
 APP_BUNDLE_ID = "com.kayode.storagesense".freeze
 APP_NAME = ENV.fetch("STORAGESENSE_APP_NAME", "StorageSense").freeze
@@ -384,5 +388,68 @@ platform :ios do
     (app.fetch_edit_app_info || app.fetch_live_app_info)&.get_app_info_localizations&.each do |loc|
       UI.message("#{loc.locale}: name=#{loc.name.inspect} subtitle=#{loc.subtitle.inspect} privacy=#{loc.privacy_policy_url.inspect}")
     end
+  end
+
+  desc "Set the app price to Free with GBR as base territory"
+  lane :price_free do
+    require "spaceship"
+    authenticate
+    app = Spaceship::ConnectAPI::App.find(APP_BUNDLE_ID) || UI.user_error!("No app record")
+    points = asc(:get, "/v1/apps/#{app.id}/appPricePoints?filter[territory]=GBR&limit=5")["data"]
+    free = points.find { |pt| pt.dig("attributes", "customerPrice").to_f.zero? } || UI.user_error!("No free price point")
+    asc(:post, "/v1/appPriceSchedules", {
+      data: { type: "appPriceSchedules",
+              relationships: {
+                app: { data: { type: "apps", id: app.id } },
+                baseTerritory: { data: { type: "territories", id: "GBR" } },
+                manualPrices: { data: [{ type: "appPrices", id: "${price1}" }] }
+              } },
+      included: [{ type: "appPrices", id: "${price1}",
+                   attributes: { startDate: nil },
+                   relationships: { appPricePoint: { data: { type: "appPricePoints", id: free["id"] } } } }]
+    })
+    UI.success("price set to Free (base territory GBR)")
+  end
+
+  desc "Internal TestFlight: an all-builds group every team member can install from"
+  lane :testflight_internal do
+    require "spaceship"
+    authenticate
+    app = Spaceship::ConnectAPI::App.find(APP_BUNDLE_ID) || UI.user_error!("No app record")
+    groups = asc(:get, "/v1/apps/#{app.id}/betaGroups?limit=50")["data"]
+    group = groups.find { |g| g.dig("attributes", "isInternalGroup") }
+    group ||= asc(:post, "/v1/betaGroups", {
+      data: { type: "betaGroups",
+              attributes: { name: "Team", isInternalGroup: true, hasAccessToAllBuilds: true },
+              relationships: { app: { data: { type: "apps", id: app.id } } } }
+    })["data"]
+    UI.success("internal group: #{group.dig('attributes', 'name')} (all builds: #{group.dig('attributes', 'hasAccessToAllBuilds')})")
+    users = asc(:get, "/v1/users?limit=50")["data"]
+    users.each do |u|
+      a = u["attributes"]
+      UI.message("team member: #{a['username']} — roles #{a['roles'].join(',')} — TestFlight access via all-apps: #{a['allAppsVisible']}")
+    end
+    users.select { |u| u.dig("attributes", "roles").include?("ACCOUNT_HOLDER") }.each do |u|
+      email = u.dig("attributes", "username")
+      existing = asc(:get, "/v1/betaTesters?filter[email]=#{email}&limit=1")["data"].first
+      tester = existing || asc(:post, "/v1/betaTesters", {
+        data: { type: "betaTesters", attributes: { email: email, firstName: u.dig("attributes", "firstName"), lastName: u.dig("attributes", "lastName") },
+                relationships: { betaGroups: { data: [{ type: "betaGroups", id: group["id"] }] } } }
+      })["data"]
+      asc(:post, "/v1/betaGroups/#{group['id']}/relationships/betaTesters", { data: [{ type: "betaTesters", id: tester["id"] }] }) if existing
+      UI.success("added #{email} to #{group.dig('attributes', 'name')}")
+    end
+    testers = asc(:get, "/v1/betaGroups/#{group['id']}/betaTesters?limit=50")["data"]
+    UI.message("testers in group: #{testers.map { |t| t.dig('attributes', 'email') }.join(', ')}")
+    UI.important("Internal testers are App Store Connect team members; each installs from the TestFlight app after accepting the email invite.")
+  end
+
+  desc "Build a Debug build and install it on the paired iPhone (no TestFlight)"
+  lane :device do
+    device_id = ENV.fetch("STORAGESENSE_DEVICE", "155B16A3-DB7C-558A-9003-72F2F86B7D22")
+    sh("cd .. && xcodegen generate")
+    sh("cd .. && xcodebuild -scheme #{SCHEME} -configuration Debug -destination 'generic/platform=iOS' -derivedDataPath build/device -allowProvisioningUpdates -allowProvisioningDeviceRegistration build | grep -E 'error:|BUILD'")
+    sh("cd .. && xcrun devicectl device install app --device #{device_id} build/device/Build/Products/Debug-iphoneos/#{SCHEME}.app")
+    sh("cd .. && xcrun devicectl device process launch --device #{device_id} #{APP_BUNDLE_ID}")
   end
 end
