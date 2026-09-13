@@ -243,7 +243,10 @@ platform :ios do
     response = Net::HTTP.start(uri.host, uri.port, use_ssl: true) { |http| http.request(request) }
     json = response.body.to_s.empty? ? {} : JSON.parse(response.body)
     unless response.code.to_i.between?(200, 299)
-      detail = (json["errors"] || []).map { |e| "#{e['code']}: #{e['detail']}" }.join("; ")
+      detail = (json["errors"] || []).map { |e|
+        assoc = (e.dig("meta", "associatedErrors") || {}).values.flatten.map { |x| "#{x['code']}: #{x['detail']}" }
+        ["#{e['code']}: #{e['detail']}", *assoc].join(" | ")
+      }.join("; ")
       UI.user_error!("#{method.to_s.upcase} #{path} → #{response.code} #{detail}")
     end
     json
@@ -511,7 +514,12 @@ platform :ios do
     app = Spaceship::ConnectAPI::App.find(APP_BUNDLE_ID) || UI.user_error!("No app record")
     v = asc(:get, "/v1/apps/#{app.id}/appStoreVersions?filter[platform]=IOS&limit=1")["data"].first
     UI.user_error!("Version is #{v.dig('attributes','appStoreState')}, not PREPARE_FOR_SUBMISSION") unless v.dig("attributes", "appStoreState") == "PREPARE_FOR_SUBMISSION"
-    sub = asc(:post, "/v1/reviewSubmissions", { data: { type: "reviewSubmissions", attributes: { platform: "IOS" }, relationships: { app: { data: { type: "apps", id: app.id } } } } })["data"]
+    asc(:patch, "/v1/apps/#{app.id}", { data: { type: "apps", id: app.id, attributes: { contentRightsDeclaration: "DOES_NOT_USE_THIRD_PARTY_CONTENT" } } })
+    UI.message("content rights: does not use third-party content")
+    open_subs = asc(:get, "/v1/apps/#{app.id}/reviewSubmissions?filter[state]=READY_FOR_REVIEW,WAITING_FOR_REVIEW,IN_REVIEW,UNRESOLVED_ISSUES&limit=5")["data"]
+    sub = open_subs.first || asc(:post, "/v1/reviewSubmissions", { data: { type: "reviewSubmissions", attributes: { platform: "IOS" }, relationships: { app: { data: { type: "apps", id: app.id } } } } })["data"]
+    UI.message("submission #{sub['id']} state=#{sub.dig('attributes','state')}")
+    items = asc(:get, "/v1/reviewSubmissions/#{sub['id']}/items")["data"]
     asc(:post, "/v1/reviewSubmissionItems", { data: { type: "reviewSubmissionItems", relationships: { reviewSubmission: { data: { type: "reviewSubmissions", id: sub["id"] } }, appStoreVersion: { data: { type: "appStoreVersions", id: v["id"] } } } } })
     asc(:patch, "/v1/reviewSubmissions/#{sub['id']}", { data: { type: "reviewSubmissions", id: sub["id"], attributes: { submitted: true } } })
     UI.success("submitted version #{v.dig('attributes','versionString')} for review (submission #{sub['id']})")
